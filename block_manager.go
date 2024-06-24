@@ -11,7 +11,7 @@
 package main
 
 import (
-  _"fmt"
+  "fmt"
 )
 
 type BlockManager struct {
@@ -33,7 +33,13 @@ func (bm *BlockManager) ProcessBlock(block *Block) error {
 
   // Process each transaction/contract
   for _, tx := range block.transactions {
-    go bm.ProcessTransaction(tx, lockChan)
+    // If there's no recipient, it's a contract
+    if tx.recipient == "" {
+      go bm.ProcessContract(tx, block, lockChan)
+    } else {
+      // "finish" tx which isn't a contract
+      lockChan <- true
+    }
   }
 
   // Wait for all Tx to finish processing
@@ -44,14 +50,25 @@ func (bm *BlockManager) ProcessBlock(block *Block) error {
   return nil
 }
 
-func (bm *BlockManager) ProcessTransaction(tx *Transaction, lockChan chan bool) {
-  if tx.recipient == "\x00" {
-    bm.vm.RunTransaction(tx, func(opType OpType) bool {
-      // TODO calculate fees
+func (bm *BlockManager) ProcessContract(tx *Transaction, block *Block, lockChan chan bool) {
+  // Recovering function in case the VM had any errors
+  defer func() {
+    if r := recover(); r != nil {
+      fmt.Println("Recovered from VM execution with err =", r)
+      // Let the channel know where done even though it failed (so the execution may resume normally)
+      lockChan <- true
+    }
+  }()
 
-      return true // Continue
-    })
-  }
+  // Process contract
+  bm.vm.ProcContract(tx, block, func(opType OpType) bool {
+    // TODO turn on once big ints are in place
+    //if !block.PayFee(tx.Hash(), StepFee.Uint64()) {
+    //  return false
+    //}
+
+    return true // Continue
+  })
 
   // Broadcast we're done
   lockChan <- true

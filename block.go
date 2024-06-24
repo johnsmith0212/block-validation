@@ -1,9 +1,10 @@
 package main
 
 import (
-  _"fmt"
+  "fmt"
   "time"
   _"bytes"
+  _"encoding/hex"
 )
 
 type Block struct {
@@ -15,6 +16,7 @@ type Block struct {
   uncles        []*Block
   coinbase      string
   // state xxx
+  state         *Trie
   difficulty    uint32
   // Creation time
   time          int64
@@ -34,7 +36,7 @@ func NewBlock(raw []byte) *Block {
 }
 
 // Creates a new block. This is currently for testing
-func CreateBlock(/* TODO use raw data */transactions []*Transaction) *Block {
+func CreateTestBlock(/* TODO use raw data */transactions []*Transaction) *Block {
   block := &Block{
     // Slice of transactions to include in this block
     transactions: transactions,
@@ -49,12 +51,80 @@ func CreateBlock(/* TODO use raw data */transactions []*Transaction) *Block {
   return block
 }
 
-func (block *Block) Update() {
+func CreateBlock(root string, num int, prevHash string, base string, difficulty int, nonce int, extra string, txes []*Transaction) *Block {
+  block := &Block{
+    // Slice of transactions to include in this block
+    transactions: txes,
+    number: uint32(num),
+    prevHash: prevHash,
+    coinbase: base,
+    difficulty: uint32(difficulty),
+    nonce: uint32(nonce),
+    time: time.Now().Unix(),
+    extra: extra,
+  }
+  block.state = NewTrie(Db, root)
+
+  for _, tx := range txes {
+    // Create contract if there's no recipient
+    if tx.recipient == "" {
+      addr := tx.Hash()
+
+      contract := NewContract(tx.value, []byte(""))
+      block.state.Update(string(addr), string(contract.MarshalRlp()))
+      for i, val := range tx.data {
+        contract.state.Update(string(NumberToBytes(uint64(i), 32)), val)
+        //contract.state.Update(string(Encode(uint32(i))), val)
+      }
+      block.UpdateContract(addr, contract)
+    }
+  }
+
+  return block
+}
+
+func (block *Block) GetContract(addr []byte) *Contract {
+  data := block.state.Get(string(addr))
+  if data == "" {
+    return nil
+  }
+
+  contract := &Contract{}
+  contract.UnmarshalRlp([]byte(data))
+
+  return contract
+}
+
+func (block *Block) UpdateContract(addr []byte, contract *Contract) {
+  block.state.Update(string(addr), string(contract.MarshalRlp()))
+}
+
+
+func (block *Block) PayFee(addr []byte, fee uint64) bool {
+  contract := block.GetContract(addr)
+  // If we can't pay the fee return
+  if contract == nil || contract.amount < fee {
+    fmt.Println("Contract has insufficient funds", contract.amount, fee)
+    return false
+  }
+
+  contract.amount -= fee
+  block.state.Update(string(addr), string(contract.MarshalRlp()))
+
+  data := block.state.Get(string(block.coinbase))
+  println(data)
+  // Get the ether (coinbase) and add the fee (gief fee to miner)
+  ether := NewEtherFromData([]byte(data))
+  ether.amount += fee
+
+  block.state.Update(string(block.coinbase), string(ether.MarshalRlp()))
+
+  return true
 }
 
 // Returns a hash of the block
-func (block *Block) Hash() string {
-  return Sha256Hex(block.MarshalRlp())
+func (block *Block) Hash() []byte {
+  return Sha256Bin(block.MarshalRlp())
 }
 
 func (block *Block) MarshalRlp() []byte {
@@ -73,7 +143,7 @@ func (block *Block) MarshalRlp() []byte {
     "",
     block.coinbase,
     // root state
-    "",
+    block.state.root,
     // Sha of tx
     string(Sha256Bin([]byte(Encode(encTx)))),
     block.difficulty,
@@ -99,7 +169,7 @@ func (block *Block) UnmarshalRlp(data []byte) {
         block.number = uint32(number)
       }
 
-      if prevHash, ok := header[1].([]byte); ok {
+      if prevHash, ok := header[1].([]uint8); ok {
         block.prevHash = string(prevHash)
       }
 
@@ -109,7 +179,12 @@ func (block *Block) UnmarshalRlp(data []byte) {
         block.coinbase = string(coinbase)
       }
 
-      // state is header[header[4]
+      if state, ok := header[4].([]uint8); ok {
+        // XXX The database is currently a global variable defined in testing.go
+        // This will eventually go away and the database will grabbed from the public server
+        // interface
+        block.state = NewTrie(Db, string(state))
+      }
 
       // sha is header[5]
 

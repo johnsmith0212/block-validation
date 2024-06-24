@@ -1,16 +1,21 @@
 package main
 
 import (
-  "math"
+  _"math"
   "math/big"
   "fmt"
-  "strconv"
+  _"strconv"
   _ "encoding/hex"
+  "strconv"
 )
 
 // Op codes
 const (
   oSTOP       int = 0x00
+  oPUSH       int = 0x30
+  oPOP        int = 0x31
+  oLOAD       int = 0x36
+  /*
   oADD        int = 0x10
   oSUB        int = 0x11
   oMUL        int = 0x12
@@ -46,6 +51,7 @@ const (
   oDATAN      int = 0x81
   oMYADDRESS  int = 0x90
   oSUICIDE    int = 0xff
+  */
 )
 
 type OpType int
@@ -57,6 +63,81 @@ const (
 )
 type TxCallback func(opType OpType) bool
 
+// Simple push/pop stack mechanism
+type Stack struct {
+  data []string
+}
+func NewStack() *Stack {
+  return &Stack{}
+}
+func (st *Stack) Pop() string {
+  s := len(st.data)
+
+  str := st.data[s-1]
+  st.data = st.data[:s-1]
+
+  return str
+}
+
+func (st *Stack) Push(d string) {
+  st.data = append(st.data, d)
+}
+
+type Vm struct {
+  // Stack
+  stack *Stack
+}
+
+func NewVm() *Vm {
+  return &Vm{
+    stack: NewStack(),
+  }
+}
+
+func (vm *Vm) ProcContract(tx *Transaction, block *Block, cb TxCallback) {
+  // Instruction pointer
+  iptr := 0
+
+  contract := block.GetContract(tx.Hash())
+  if contract == nil {
+    fmt.Println("Contract not found")
+    return
+  }
+
+  fmt.Printf("#   op   arg\n")
+out:
+  for {
+    // The base big int for all calculations. Use this for any results.
+    base := new(big.Int)
+    base.SetString("0",0) // so it doesn't whine about it
+    // XXX Should Instr return big int slice instead of string slice?
+    // Get the next instruction from the contract
+    op, args, _ := Instr(contract.state.Get(string(Encode(uint32(iptr)))))
+
+    if Debug {
+      fmt.Printf("%-3d %-4d %v\n", iptr, op, args)
+    }
+
+    switch op {
+    case oPUSH:
+      // Get the next entry and pushes the value on the stack
+      iptr++
+      vm.stack.Push(contract.state.Get(string(Encode(uint32(iptr)))))
+    case oPOP:
+      // Pop current value of the stack
+      vm.stack.Pop()
+    case oLOAD:
+      // Load instruction X on the stack
+      i, _ := strconv.Atoi(vm.stack.Pop())
+      vm.stack.Push(contract.state.Get(string(Encode(uint32(i)))))
+    case oSTOP:
+      break out
+    }
+    iptr++
+  }
+}
+
+/*
 type Vm struct {
   // Memory stack
   stack map[string]string
@@ -183,3 +264,4 @@ out:
     }
   }
 }
+*/
