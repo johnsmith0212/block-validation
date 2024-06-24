@@ -2,7 +2,7 @@ package main
 
 import (
   "math/big"
-  "fmt"
+  _"fmt"
   "github.com/obscuren/secp256k1-go"
   _"encoding/hex"
   _"crypto/sha256"
@@ -121,28 +121,6 @@ func (tx *Transaction) SetVRS() {
   tx.s = pubk[32:64]
 }
 
-func (tx *Transaction) IsContract() bool {
-  return tx.recipient == ""
-}
-
-func (tx *Transaction) Signature() []byte {
-  hash := Sha256Bin(tx.MarshalRlp())
-  sec  := Sha256Bin([]byte("myprivkey"))
-
-  sig, _ := secp256k1.Sign(hash, sec)
-
-  return sig
-}
-
-func (tx *Transaction) PublicKey() []byte {
-  hash := Sha256Bin(tx.MarshalRlp())
-  sig  := tx.Signature()
-
-  pubkey, _ := secp256k1.RecoverPubkey(hash, sig)
-
-  return pubkey
-}
-
 func (tx *Transaction) MarshalRlp() []byte {
   // Prepare the transaction for serialization
   preEnc := []interface{}{
@@ -162,7 +140,6 @@ func (tx *Transaction) MarshalRlp() []byte {
 func (tx *Transaction) UnmarshalRlp(data []byte) {
   t, _ := Decode(data,0)
   if slice, ok := t.([]interface{}); ok {
-    fmt.Printf("NONCE %T\n", slice[3])
     if nonce, ok := slice[0].(uint8); ok {
       tx.nonce = string(nonce)
     }
@@ -208,7 +185,6 @@ func (tx *Transaction) UnmarshalRlp(data []byte) {
     }
 
     // vrs
-    fmt.Printf("v %T\n", slice[5])
     if v, ok := slice[5].(uint8); ok {
       tx.v = uint32(v)
     }
