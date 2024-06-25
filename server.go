@@ -2,7 +2,9 @@ package main
 
 import (
   "container/list"
-  "time"
+  "net"
+  "log"
+  _"time"
 )
 
 var Db *LDBDatabase
@@ -36,14 +38,67 @@ func NewServer() (*Server, error) {
   return server, nil
 }
 
+func (s *Server) AddPeer(conn net.Conn) {
+  peer := NewPeer(conn, s)
+  s.peers.PushBack(peer)
+  peer.Start()
+
+  log.Println("Peer connected ::", conn.RemoteAddr())
+}
+
+func (s *Server) ConnectToPeer(addr string) error {
+  conn, err := net.Dial("tcp", addr)
+
+  if err != nil {
+    return err
+  }
+
+  peer := NewPeer(conn, s)
+  s.peers.PushBack(peer)
+  peer.Start()
+
+
+  log.Println("Connected to peer ::", conn.RemoteAddr())
+
+  return nil
+}
+
+func (s *Server) Broadcast(msgType string, data []byte) {
+  for e := s.peers.Front(); e != nil; e = e.Next() {
+    if peer, ok := e.Value.(*Peer); ok {
+      peer.QueueMessage(msgType, data)
+    }
+  }
+}
+
 // Start the server
 func (s *Server) Start() {
   // For now this function just blocks the main thread
+  ln, err := net.Listen("tcp", ":12345")
+  if err != nil {
+    log.Fatal(err)
+  }
+
   go func() {
     for {
-      time.Sleep( time.Second )
+      conn, err := ln.Accept()
+      if err != nil {
+        log.Println(err)
+        continue
+      }
+
+      go s.AddPeer(conn)
     }
   }()
+
+  // TMP
+  //go func() {
+  //  for {
+  //    s.Broadcast("block", Encode("blockdata"))
+//
+//      time.Sleep(100 * time.Millisecond)
+//    }
+//  }()
 }
 
 func (s *Server) Stop() {
@@ -52,7 +107,9 @@ func (s *Server) Stop() {
 
   // Loop thru the peers and close them (if we had them)
   for e := s.peers.Front(); e != nil; e = e.Next() {
-    // peer close etc
+    if peer, ok := e.Value.(*Peer); ok {
+      peer.Stop()
+    }
   }
 
   s.shutdownChan <- true
