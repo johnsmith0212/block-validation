@@ -1,126 +1,288 @@
-package main
+package eth
 
 import (
-	"flag"
-	"fmt"
-	"github.com/ethereum/eth-go"
+	"container/list"
 	"github.com/ethereum/ethchain-go"
+	"github.com/ethereum/ethdb-go"
 	"github.com/ethereum/ethutil-go"
-	_ "github.com/ethereum/ethwire-go"
+	"github.com/ethereum/ethwire-go"
 	"log"
-	"os"
-	"os/signal"
-	"path"
-	"runtime"
+	"net"
+	"strconv"
+	"sync/atomic"
 	"time"
 )
 
-const Debug = true
-
-var StartConsole bool
-var StartMining bool
-
-func Init() {
-	flag.BoolVar(&StartConsole, "c", false, "debug and testing console")
-	flag.BoolVar(&StartMining, "m", false, "start dagger mining")
-
-	flag.Parse()
-}
-
-// Register interrupt handlers so we can stop the ethereum
-func RegisterInterupts(s *eth.Ethereum) {
-	// Buffered chan of one is enough
-	c := make(chan os.Signal, 1)
-	// Notify about interrupts for now
-	signal.Notify(c, os.Interrupt)
-	go func() {
-		for sig := range c {
-			fmt.Printf("Shutting down (%v) ... \n", sig)
-
-			s.Stop()
+func eachPeer(peers *list.List, callback func(*Peer, *list.Element)) {
+	// Loop thru the peers and close them (if we had them)
+	for e := peers.Front(); e != nil; e = e.Next() {
+		if peer, ok := e.Value.(*Peer); ok {
+			callback(peer, e)
 		}
-	}()
+	}
 }
 
-func main() {
-	runtime.GOMAXPROCS(runtime.NumCPU())
-	Init()
+const (
+	processReapingTimeout = 60 // TODO increase
+)
 
-	ethchain.InitFees()
-	ethutil.ReadConfig()
+type Ethereum struct {
+	// Channel for shutting down the ethereum
+	shutdownChan chan bool
+	// DB interface
+	//db *ethdb.LDBDatabase
+	db *ethdb.MemDatabase
+	// Block manager for processing new blocks and managing the block chain
+	BlockManager *ethchain.BlockManager
+	// The transaction pool. Transaction can be pushed on this pool
+	// for later including in the blocks
+	TxPool *ethchain.TxPool
+	// Peers (NYI)
+	peers *list.List
+	// Nonce
+	Nonce uint64
 
-	log.Printf("Starting Ethereum v%s\n", ethutil.Config.Ver)
+	Addr net.Addr
 
-	// Instantiated a eth stack
-	ethereum, err := eth.New()
+	nat NAT
+}
+
+func New() (*Ethereum, error) {
+	//db, err := ethdb.NewLDBDatabase()
+	db, err := ethdb.NewMemDatabase()
 	if err != nil {
-		log.Println(err)
-		return
+		return nil, err
 	}
 
-	if StartConsole {
-		err := os.Mkdir(ethutil.Config.ExecPath, os.ModePerm)
-		// Error is OK if the error is ErrExist
-		if err != nil && !os.IsExist(err) {
-			log.Panic("Unable to create EXECPATH. Exiting")
-		}
+	ethutil.Config.Db = db
 
-		// TODO The logger will eventually be a non blocking logger. Logging is a expensive task
-		// Log to file only
-		file, err := os.OpenFile(path.Join(ethutil.Config.ExecPath, "debug.log"), os.O_RDWR|os.O_CREATE, os.ModePerm)
+	/*
+		nat, err := Discover()
 		if err != nil {
-			log.Panic("Unable to set proper logger", err)
+			log.Printf("Can'them discover upnp: %v", err)
 		}
+	*/
 
-		ethutil.Config.Log = log.New(file, "", 0)
+	nonce, _ := ethutil.RandomUint64()
+	ethereum := &Ethereum{
+		shutdownChan: make(chan bool),
+		db:           db,
+		peers:        list.New(),
+		Nonce:        nonce,
+		//nat:          nat,
+	}
+	ethereum.TxPool = ethchain.NewTxPool()
+	ethereum.TxPool.Speaker = ethereum
+	ethereum.BlockManager = ethchain.NewBlockManager(ethereum)
 
-		console := NewConsole(ethereum)
-		go console.Start()
+	ethereum.TxPool.BlockManager = ethereum.BlockManager
+	ethereum.BlockManager.TransactionPool = ethereum.TxPool
+
+	return ethereum, nil
+}
+
+func (s *Ethereum) AddPeer(conn net.Conn) {
+	peer := NewPeer(conn, s, true)
+
+	if peer != nil {
+		if s.peers.Len() > 25 {
+			log.Println("SEED")
+			peer.Start(true)
+		} else {
+			s.peers.PushBack(peer)
+			peer.Start(false)
+		}
+	}
+}
+
+func (s *Ethereum) ProcessPeerList(addrs []string) {
+	for _, addr := range addrs {
+		// TODO Probably requires some sanity checks
+		s.ConnectToPeer(addr)
+	}
+}
+
+func (s *Ethereum) ConnectToPeer(addr string) error {
+	var alreadyConnected bool
+
+	eachPeer(s.peers, func(p *Peer, v *list.Element) {
+		if p.conn == nil {
+			return
+		}
+		phost, _, _ := net.SplitHostPort(p.conn.RemoteAddr().String())
+		ahost, _, _ := net.SplitHostPort(addr)
+
+		if phost == ahost {
+			alreadyConnected = true
+			return
+		}
+	})
+
+	if alreadyConnected {
+		return nil
 	}
 
-	RegisterInterupts(ethereum)
+	peer := NewOutboundPeer(addr, s)
 
-	ethereum.Start()
+	s.peers.PushBack(peer)
 
-	if StartMining {
-		blockTime := time.Duration(10)
-		log.Printf("Dev Test Mining started. Blocks found each %d seconds\n", blockTime)
+	return nil
+}
 
-		// Fake block mining. It broadcasts a new block every 5 seconds
+func (s *Ethereum) OutboundPeers() []*Peer {
+	// Create a new peer slice with at least the length of the total peers
+	outboundPeers := make([]*Peer, s.peers.Len())
+	length := 0
+	eachPeer(s.peers, func(p *Peer, e *list.Element) {
+		if !p.inbound && p.conn != nil {
+			outboundPeers[length] = p
+			length++
+		}
+	})
+
+	return outboundPeers[:length]
+}
+
+func (s *Ethereum) InboundPeers() []*Peer {
+	// Create a new peer slice with at least the length of the total peers
+	inboundPeers := make([]*Peer, s.peers.Len())
+	length := 0
+	eachPeer(s.peers, func(p *Peer, e *list.Element) {
+		if p.inbound {
+			inboundPeers[length] = p
+			length++
+		}
+	})
+
+	return inboundPeers[:length]
+}
+
+func (s *Ethereum) InOutPeers() []*Peer {
+	// Create a new peer slice with at least the length of the total peers
+	inboundPeers := make([]*Peer, s.peers.Len())
+	length := 0
+	eachPeer(s.peers, func(p *Peer, e *list.Element) {
+		inboundPeers[length] = p
+		length++
+	})
+
+	return inboundPeers[:length]
+}
+
+func (s *Ethereum) Broadcast(msgType ethwire.MsgType, data interface{}) {
+	msg := ethwire.NewMessage(msgType, data)
+	eachPeer(s.peers, func(p *Peer, e *list.Element) {
+		p.QueueMessage(msg)
+	})
+}
+
+func (s *Ethereum) Peers() *list.List {
+	return s.peers
+}
+
+func (s *Ethereum) ReapDeadPeers() {
+	for {
+		eachPeer(s.peers, func(p *Peer, e *list.Element) {
+			if atomic.LoadInt32(&p.disconnect) == 1 || (p.inbound && (time.Now().Unix()-p.lastPong) > int64(5*time.Minute)) {
+				s.peers.Remove(e)
+			}
+		})
+
+		time.Sleep(processReapingTimeout * time.Second)
+	}
+}
+
+// FIXME
+func (s *Ethereum) upnpUpdateThread() {
+	// Go off immediately to prevent code duplication, thereafter we renew
+	// lease every 15 minutes.
+	timer := time.NewTimer(0 * time.Second)
+	lport, _ := strconv.ParseInt("30303", 10, 16)
+	first := true
+out:
+	for {
+		select {
+		case <-timer.C:
+			listenPort, err := s.nat.AddPortMapping("TCP", int(lport), int(lport), "eth listen port", 20*60)
+			if err != nil {
+				log.Printf("can't add UPnP port mapping: %v\n", err)
+			}
+			if first && err == nil {
+				externalip, err := s.nat.GetExternalAddress()
+				if err != nil {
+					log.Printf("UPnP can't get external address: %v\n", err)
+					continue out
+				}
+				// externalip, listenport
+				log.Println("Successfully bound via UPnP to", externalip, listenPort)
+				first = false
+			}
+			timer.Reset(time.Minute * 15)
+		case <-s.shutdownChan:
+			break out
+		}
+	}
+
+	timer.Stop()
+
+	if err := s.nat.DeletePortMapping("tcp", int(lport), int(lport)); err != nil {
+		log.Printf("unable to remove UPnP port mapping: %v\n", err)
+	} else {
+		log.Printf("succesfully disestablished UPnP port mapping\n")
+	}
+}
+
+// Start the ethereum
+func (s *Ethereum) Start() {
+	// Bind to addr and port
+	ln, err := net.Listen("tcp", ":30303")
+	if err != nil {
+		// This is mainly for testing to create a "network"
+		//if ethutil.Config.Debug {
+		//log.Println("Connection listening disabled. Acting as client")
+		//} else {
+		log.Fatal(err)
+		//}
+	} else {
+		s.Addr = ln.Addr()
+		// Starting accepting connections
 		go func() {
-			pow := &ethchain.EasyPow{}
+			log.Println("Ready and accepting connections")
 
 			for {
-				txs := ethereum.TxPool.Flush()
-				block := ethereum.BlockManager.BlockChain().NewBlock("82c3b0b72cf62f1a9ce97c64da8072efa28225d8", txs)
+				conn, err := ln.Accept()
+				if err != nil {
+					log.Println(err)
 
-				nonce := pow.Search(block)
-				block.Nonce = nonce
+					continue
+				}
 
-				log.Println("nonce found:", nonce)
-				/*
-					time.Sleep(blockTime * time.Second)
-
-
-					block := ethchain.CreateBlock(
-						ethereum.BlockManager.BlockChain().CurrentBlock.State().Root,
-						ethereum.BlockManager.BlockChain().LastBlockHash,
-						"123",
-						big.NewInt(1),
-						big.NewInt(1),
-						"",
-						txs)
-					err := ethereum.BlockManager.ProcessBlockWithState(block, block.State())
-					if err != nil {
-						log.Println(err)
-					} else {
-						//log.Println("\n+++++++ MINED BLK +++++++\n", block.String())
-					}
-				*/
+				go s.AddPeer(conn)
 			}
 		}()
 	}
 
-	// Wait for shutdown
-	ethereum.WaitForShutdown()
+	// Start the reaping processes
+	go s.ReapDeadPeers()
+
+	// Start the tx pool
+	s.TxPool.Start()
+}
+
+func (s *Ethereum) Stop() {
+	// Close the database
+	defer s.db.Close()
+
+	eachPeer(s.peers, func(p *Peer, e *list.Element) {
+		p.Stop()
+	})
+
+	s.shutdownChan <- true
+
+	s.TxPool.Stop()
+}
+
+// This function will wait for a shutdown and resumes main thread execution
+func (s *Ethereum) WaitForShutdown() {
+	<-s.shutdownChan
 }
