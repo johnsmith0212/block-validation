@@ -1,4 +1,4 @@
-package main
+package eth
 
 import (
 	"github.com/ethereum/ethutil-go"
@@ -16,8 +16,8 @@ const (
 )
 
 type Peer struct {
-	// Server interface
-	server *Server
+	// Ethereum interface
+	ethereum *Ethereum
 	// Net connection
 	conn net.Conn
 	// Output queue which is used to communicate and handle messages
@@ -43,11 +43,11 @@ type Peer struct {
 	requestedPeerList bool
 }
 
-func NewPeer(conn net.Conn, server *Server, inbound bool) *Peer {
+func NewPeer(conn net.Conn, ethereum *Ethereum, inbound bool) *Peer {
 	return &Peer{
 		outputQueue: make(chan *ethwire.Msg, outputBufferSize),
 		quit:        make(chan bool),
-		server:      server,
+		ethereum:    ethereum,
 		conn:        conn,
 		inbound:     inbound,
 		disconnect:  0,
@@ -55,11 +55,11 @@ func NewPeer(conn net.Conn, server *Server, inbound bool) *Peer {
 	}
 }
 
-func NewOutboundPeer(addr string, server *Server) *Peer {
+func NewOutboundPeer(addr string, ethereum *Ethereum) *Peer {
 	p := &Peer{
 		outputQueue: make(chan *ethwire.Msg, outputBufferSize),
 		quit:        make(chan bool),
-		server:      server,
+		ethereum:    ethereum,
 		inbound:     false,
 		connected:   0,
 		disconnect:  0,
@@ -160,7 +160,7 @@ out:
 			break out
 		}
 
-		if Debug {
+		if ethutil.Config.Debug {
 			log.Printf("Received %s\n", msg.Type.String())
 		}
 
@@ -169,12 +169,12 @@ out:
 			// Version message
 			p.handleHandshake(msg)
 		case ethwire.MsgBlockTy:
-			err := p.server.blockManager.ProcessBlock(ethutil.NewBlock(msg.Data))
+			err := p.ethereum.BlockManager.ProcessBlock(ethutil.NewBlock(msg.Data))
 			if err != nil {
 				log.Println(err)
 			}
 		case ethwire.MsgTxTy:
-			p.server.txPool.QueueTransaction(ethutil.NewTransactionFromData(msg.Data))
+			p.ethereum.TxPool.QueueTransaction(ethutil.NewTransactionFromData(msg.Data))
 		case ethwire.MsgInvTy:
 		case ethwire.MsgGetPeersTy:
 			p.requestedPeerList = true
@@ -185,7 +185,7 @@ out:
 			// Only act on message if we actually requested for a peers list
 			if p.requestedPeerList {
 				data := ethutil.Conv(msg.Data)
-				// Create new list of possible peers for the server to process
+				// Create new list of possible peers for the ethereum to process
 				peers := make([]string, data.Length())
 				// Parse each possible peer
 				for i := 0; i < data.Length(); i++ {
@@ -193,7 +193,7 @@ out:
 				}
 
 				// Connect to the list of peers
-				p.server.ProcessPeerList(peers)
+				p.ethereum.ProcessPeerList(peers)
 				// Mark unrequested again
 				p.requestedPeerList = false
 			}
@@ -239,7 +239,7 @@ func (p *Peer) Stop() {
 
 func (p *Peer) pushHandshake() error {
 	msg := ethwire.NewMessage(ethwire.MsgHandshakeTy, ethutil.Encode([]interface{}{
-		1, 0, p.server.Nonce,
+		1, 0, p.ethereum.Nonce,
 	}))
 
 	p.QueueMessage(msg)
@@ -249,9 +249,9 @@ func (p *Peer) pushHandshake() error {
 
 // Pushes the list of outbound peers to the client when requested
 func (p *Peer) pushPeers() {
-	outPeers := make([]interface{}, len(p.server.OutboundPeers()))
+	outPeers := make([]interface{}, len(p.ethereum.OutboundPeers()))
 	// Serialise each peer
-	for i, peer := range p.server.OutboundPeers() {
+	for i, peer := range p.ethereum.OutboundPeers() {
 		outPeers[i] = peer.RlpEncode()
 	}
 
@@ -264,8 +264,8 @@ func (p *Peer) pushPeers() {
 func (p *Peer) handleHandshake(msg *ethwire.Msg) {
 	c := ethutil.Conv(msg.Data)
 	// [PROTOCOL_VERSION, NETWORK_ID, CLIENT_ID]
-	if c.Get(2).AsUint() == p.server.Nonce {
-		//if msg.Nonce == p.server.Nonce {
+	if c.Get(2).AsUint() == p.ethereum.Nonce {
+		//if msg.Nonce == p.ethereum.Nonce {
 		log.Println("Peer connected to self, disconnecting")
 
 		p.Stop()
