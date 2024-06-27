@@ -5,7 +5,7 @@ import (
 	"github.com/ethereum/ethchain-go"
 	"github.com/ethereum/ethdb-go"
 	"github.com/ethereum/ethutil-go"
-	"github.com/ethereum/ethwire-go"
+	_ "github.com/ethereum/ethwire-go"
 	"log"
 	"net"
 	"strconv"
@@ -273,21 +273,6 @@ func (s *Ethereum) WaitForShutdown() {
 	<-s.shutdownChan
 }
 
-func (s *Ethereum) upnpUpdateThread() {
-	// Go off immediately to prevent code duplication, thereafter we renew
-	// lease every 15 minutes.
-	timer := time.NewTimer(0 * time.Second)
-	lport, _ := strconv.ParseInt("30303", 10, 16)
-	first := true
-out:
-	for {
-		select {
-		case <-timer.C:
-			var err error
-			_, err = s.nat.AddPortMapping("TCP", int(lport), int(lport), "eth listen port", 20*60)
-			if err != nil {
-				log.Println("can't add UPnP port mapping:", err)
-				break out
 			}
 			if first && err == nil {
 				_, err = s.nat.GetExternalAddress()
