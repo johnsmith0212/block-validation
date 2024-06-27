@@ -272,7 +272,6 @@ func (s *Ethereum) Stop() {
 func (s *Ethereum) WaitForShutdown() {
 	<-s.shutdownChan
 }
-
 			}
 			if first && err == nil {
 				_, err = s.nat.GetExternalAddress()
