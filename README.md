@@ -3,7 +3,7 @@ Ethereum
 
 [![Build Status](https://travis-ci.org/ethereum/go-ethereum.png?branch=master)](https://travis-ci.org/ethereum/go-ethereum)
 
-Ethereum Go Development package (C) Jeffrey Wilcke
+Ethereum Go developer client (c) Jeffrey Wilcke
 
 Ethereum is currently in its testing phase. The current state is "Proof
 of Concept 2". For build instructions see the [Wiki](https://github.com/ethereum/go-ethereum/wiki/Building-Edge).
@@ -11,39 +11,60 @@ of Concept 2". For build instructions see the [Wiki](https://github.com/ethereum
 Ethereum Go is split up in several sub packages Please refer to each
 individual package for more information.
   1. [eth](https://github.com/ethereum/eth-go)
-  2. [ethchain](https://github.com/ethereum/eth-go/tree/master/ethchain)
-  3. [ethwire](https://github.com/ethereum/eth-go/tree/master/ethwire)
-  4. [ethdb](https://github.com/ethereum/eth-go/tree/master/ethdb)
-  5. [ethutil](https://github.com/ethereum/eth-go/tree/master/ethutil)
+  2. [ethchain](https://github.com/ethereum/ethchain-go)
+  3. [ethwire](https://github.com/ethereum/ethwire-go)
+  4. [ethdb](https://github.com/ethereum/ethdb-go)
+  5. [ethutil](https://github.com/ethereum/ethutil-go)
 
 The [eth](https://github.com/ethereum/eth-go) is the top-level package
 of the Ethereum protocol. It functions as the Ethereum bootstrapping and
-peer communication layer. The [ethchain](https://github.com/ethereum/eth-go/tree/master/ethchain)
+peer communication layer. The [ethchain](https://github.com/ethereum/ethchain-go)
 contains the Ethereum blockchain, block manager, transaction and
-transaction handlers. The [ethwire](https://github.com/ethereum/eth-go/tree/master/ethwire) contains
+transaction handlers. The [ethwire](https://github.com/ethereum/ethwire-go) contains
 the Ethereum [wire protocol](http://wiki.ethereum.org/index.php/Wire_Protocol) which can be used
-to hook in to the Ethereum network. [ethutil](https://github.com/ethereum/eth-go/tree/master/ethutil) contains
+to hook in to the Ethereum network. [ethutil](https://github.com/ethereum/ethutil-go) contains
 utility functions which are not Ethereum specific. The utility package
 contains the [patricia trie](http://wiki.ethereum.org/index.php/Patricia_Tree),
 [RLP Encoding](http://wiki.ethereum.org/index.php/RLP) and hex encoding
-helpers. The [ethdb](https://github.com/ethereum/eth-go/tree/master/ethdb) package
+helpers. The [ethdb](https://github.com/ethereum/ethdb-go) package
 contains the LevelDB interface and memory DB interface.
 
-This is the bootstrap package. Eth-go contains all the necessary code to
-get a node and connectivity going.
+This executable is the front-end (currently nothing but a dev console) for
+the Ethereum Go implementation.
 
 Build
 =======
 
-This is the Developer package. For the development client please see
-[Ethereum(G)](https://github.com/ethereum/go-ethereum).
+For build instruction please see the [Wiki](https://github.com/ethereum/go-ethereum/wiki/Building-Edge)
 
-`go get -u github.com/ethereum/eth-go`
+
+Command line options
+====================
+
+```
+-c       Launch the developer console
+-m       Start mining blocks
+-genaddr Generates a new address and private key (destructive action)
+-p       Port on which the server will accept incomming connections (= 30303)
+-upnp    Enable UPnP (= false)
+-x       Desired amount of peers (= 5)
+-h       This help
+```
+
+Developer console commands
+==========================
+
+```
+addp <host>:<port>     Connect to the given host
+tx <addr> <amount>     Send <amount> Wei to the specified <addr>
+```
+
+See the "help" command for *developer* options.
 
 Contribution
 ============
 
-If you'd like to contribute to Eth please fork, fix, commit and
+If you'd like to contribute to Ethereum Go please fork, fix, commit and
 send a pull request. Commits who do not comply with the coding standards
 are ignored. If you send pull requests make absolute sure that you
 commit on the `develop` branch and that you do not merge to master.
