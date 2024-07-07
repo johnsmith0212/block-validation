@@ -23,8 +23,6 @@ func RegisterInterupts(s *eth.Ethereum) {
 	go func() {
 		for sig := range c {
 			fmt.Printf("Shutting down (%v) ... \n", sig)
-
-			s.Stop()
 		}
 	}()
 }
