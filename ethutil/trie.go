@@ -98,25 +98,22 @@ func (cache *Cache) Undo() {
 // Please note that the data isn't persisted unless `Sync` is
 // explicitly called.
 type Trie struct {
-	prevRoot interface{}
-	Root     interface{}
+	Root interface{}
 	//db   Database
 	cache *Cache
 }
 
 func NewTrie(db Database, Root interface{}) *Trie {
-	return &Trie{cache: NewCache(db), Root: Root, prevRoot: Root}
+	return &Trie{cache: NewCache(db), Root: Root}
 }
 
 // Save the cached value to the database.
 func (t *Trie) Sync() {
 	t.cache.Commit()
-	t.prevRoot = t.Root
 }
 
 func (t *Trie) Undo() {
 	t.cache.Undo()
-	t.Root = t.prevRoot
 }
 
 /*
@@ -184,7 +181,6 @@ func (t *Trie) GetNode(node interface{}) *Value {
 }
 
 func (t *Trie) UpdateState(node interface{}, key []int, value string) interface{} {
-
 	if value != "" {
 		return t.InsertState(node, key, value)
 	} else {
@@ -245,7 +241,6 @@ func (t *Trie) InsertState(node interface{}, key []int, value interface{}) inter
 	// Check for "special" 2 slice type node
 	if currentNode.Len() == 2 {
 		// Decode the key
-
 		k := CompactDecode(currentNode.Get(0).Str())
 		v := currentNode.Get(1).Raw()
 
