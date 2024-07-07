@@ -98,8 +98,6 @@ func (val *Value) Str() string {
 		return string(a)
 	} else if a, ok := val.Val.(string); ok {
 		return a
-	} else if a, ok := val.Val.(byte); ok {
-		return string(a)
 	}
 
 	return ""
